@@ -86,11 +86,11 @@ int8_t VL53L1_ReadMulti(uint16_t dev, uint16_t index, uint8_t *pdata, uint32_t c
 	// read the data bytes
 	for (uint32_t i = 0; i < count; i++) {
 		if (i == (count - 1)) {
-			if (I2C_Read8(&pdata[i], I2C_NACK, I2C_STOP))
+			if (I2C_Read8(&pdata[i], I2C_ACK, I2C_STOP))
 				return -4;
 		}
 		else {
-			if (I2C_Read8(&pdata[i], I2C_ACK, I2C_NOSTOP))
+			if (I2C_Read8(&pdata[i], I2C_NACK, I2C_NOSTOP))
 				return -5;
 		}
 	}

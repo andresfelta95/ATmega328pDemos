@@ -63,12 +63,12 @@ int main(void)
     //  Scan the I2C bus
     I2C_Scan(I2CScanResults);
     // //  Initialize the SSD1306 OLED display
-    SSD1306_DispInit();
-    // //  Turn on the display
-    SSD1306_DisplayOn();
-    // //  Clear the display
-    SSD1306_Clear();
-    SSD1306_Render();
+    // SSD1306_DispInit();
+    // // //  Turn on the display
+    // SSD1306_DisplayOn();
+    // // //  Clear the display
+    // SSD1306_Clear();
+    // SSD1306_Render();
     // //  Writhe my name on the display
     // SSD1306_StringXY(0, 2, "Andres");
     // SSD1306_StringXY(7, 2, "Tangarife");
@@ -81,47 +81,47 @@ int main(void)
     //  Initialize the VL53L1X sensor
     status = VL53L1X_SensorInit(0);
     //  Calibrate the sensor
-    status = VL53L1X_CalibrateOffset(0, 140, &offSet);
-    status = VL53L1X_GetOffset(0, &_Offset);
-    status = VL53L1X_SetOffset(0, _Offset);
-    status = VL53L1X_CalibrateXtalk(0, 140, &xtalk);
-    status = VL53L1X_GetXtalk(0, &_Xtalk);
-    status = VL53L1X_SetXtalk(0, _Xtalk);
+    // status = VL53L1X_CalibrateOffset(0, 140, &offSet);
+    // status = VL53L1X_GetOffset(0, &_Offset);
+    // status = VL53L1X_SetOffset(0, _Offset);
+    // status = VL53L1X_CalibrateXtalk(0, 140, &xtalk);
+    // status = VL53L1X_GetXtalk(0, &_Xtalk);
+    // status = VL53L1X_SetXtalk(0, _Xtalk);
 
-    // Set the 2 offset values in a string
-    sprintf(offsetString1, "Offset: %d", offSet);
-    sprintf(offsetString2, "Offset: %d", _Offset);
-    // Set the 2 xtalk values in a string
-    sprintf(xtalkString1, "Xtalk: %u", xtalk);
-    sprintf(xtalkString2, "Xtalk: %u", _Xtalk);
+    // // Set the 2 offset values in a string
+    // sprintf(offsetString1, "Offset: %d", offSet);
+    // sprintf(offsetString2, "Offset: %d", _Offset);
+    // // Set the 2 xtalk values in a string
+    // sprintf(xtalkString1, "Xtalk: %u", xtalk);
+    // sprintf(xtalkString2, "Xtalk: %u", _Xtalk);
     // Display the offset and xtalk values on the display
-    SSD1306_StringXY(0, 0, offsetString1);
-    SSD1306_StringXY(0, 1, offsetString2);
-    SSD1306_StringXY(0, 2, xtalkString1);
+    // SSD1306_StringXY(0, 0, offsetString1);
+    // SSD1306_StringXY(0, 1, offsetString2);
+    // SSD1306_StringXY(0, 2, xtalkString1);
     // SSD1306_StringXY(0, 3, xtalkString2);
-    SSD1306_Render();
+    // SSD1306_Render();
 
-    status = VL53L1X_SetDistanceMode(0, 1);
-    status = VL53L1X_SetTimingBudgetInMs(0, 20);
-    status = VL53L1X_SetInterMeasurementInMs(0, 50);
-    status = VL53L1X_SetROI(0, 8, 16);
-    //  Start continuous ranging measurements
-    status = VL53L1X_StartRanging(0);
+    // status = VL53L1X_SetDistanceMode(0, 1);
+    // status = VL53L1X_SetTimingBudgetInMs(0, 500);
+    // status = VL53L1X_SetInterMeasurementInMs(0, 500);
+    // //  Start continuous ranging measurements
+    // status = VL53L1X_StartRanging(0);
 
     while (1) 
     {
-        while (_DataReady == 0)
-        {
-            status = VL53L1X_CheckForDataReady(0, &_DataReady);
-        }
-        status = VL53L1X_GetRangeStatus(0, &_RangeStatus);
-        status = VL53L1X_GetDistance(0, &_Distance);
-        status = VL53L1X_ClearInterrupt(0);
+        // while (_DataReady == 0)
+        // {
+        //     status = VL53L1X_CheckForDataReady(0, &_DataReady);
+        // }
+        // status = VL53L1X_GetRangeStatus(0, &_RangeStatus);
+        // status = VL53L1X_GetDistance(0, &_Distance);
+        // status = VL53L1X_ClearInterrupt(0);
         // //  Clear the display
         // SSD1306_Clear();
         // SSD1306_Render();
         //  Sleep for 1 second
-        // _delay_ms(1000);
+        status = VL53L1X_CalibrateOffset(0, 140, &offSet);
+        _delay_ms(2000);
         // // //  Writhe my name on the display
         // SSD1306_StringXY(0, 2, "Andres");
         // SSD1306_StringXY(7, 2, "Tangarife");
@@ -137,15 +137,16 @@ int main(void)
         //         SSD1306_Render();
         //     }
         // }
-        //  Display the distance as 10.00 cm
-        sprintf(distance, "%u mm", _Distance);
-        SSD1306_StringXY(0, 3, distance);
-        SSD1306_Render();
+        // //  Display the distance as 10.00 cm
+        // sprintf(distance, "%u mm", _Distance);
+        // SSD1306_StringXY(0, 3, distance);
+        // SSD1306_Render();
         //  Reset the _Distance variable
         // _Distance = 0;
         // _DataReady = 0;
         //  sleep for 1 second
-        _delay_ms(1000);
+        status = VL53L1X_GetOffset(0, &_Offset);
+        _delay_ms(2000);
 
     }
 }

@@ -86,8 +86,9 @@ int8_t VL53L1_ReadMulti(uint16_t dev, uint16_t index, uint8_t *pdata, uint32_t c
 	// read the data bytes
 	for (uint32_t i = 0; i < count; i++) {
 		if (i == (count - 1)) {
-			if (I2C_Read8(&pdata[i], I2C_ACK, I2C_STOP))
+			if (I2C_Read8(&pdata[i], I2C_ACK, I2C_STOP)){
 				return -4;
+			}
 		}
 		else {
 			if (I2C_Read8(&pdata[i], I2C_NACK, I2C_NOSTOP))
@@ -224,7 +225,7 @@ int8_t VL53L1_RdWord(uint16_t dev, uint16_t index, uint16_t *data) {
 	if (I2C_Read8(&ucDataH, I2C_NACK, I2C_STOP))
 		return -5;
 
-	*data = (ucDataH << 8) | ucDataL;
+	*data = (ucDataL << 8) | ucDataH;
 
 	return 0;	
 }

@@ -23,6 +23,7 @@ The project was written in 2023 as part of embedded-systems coursework at NAIT. 
 
 ```
 ATmega328pDemos/
+├── Makefile                      Command-line build (avr-gcc) and upload (avrdude)
 ├── lib/                          Reusable peripheral drivers
 │   ├── inc/                      Public headers
 │   │   ├── I2C.h                 TWI (I²C) master
@@ -46,7 +47,7 @@ ATmega328pDemos/
                 └── platform/     I²C glue written for this project
 ```
 
-The double folder level (`Demos/X/X/`) is the layout Microchip Studio creates: the solution sits in the outer folder and the project in the inner one. The `.atsln` and `.cproj` files themselves are **not** committed (they are listed in `.gitignore`). See [Building and flashing](#building-and-flashing).
+The double folder level (`Demos/X/X/`) is the layout Microchip Studio creates: the solution sits in the outer folder and the project in the inner one. The `.atsln` and `.cproj` files themselves are **not** committed (they are listed in `.gitignore`). You can use the `Makefile` or recreate the projects: see [Building and flashing](#building-and-flashing).
 
 ---
 
@@ -86,7 +87,7 @@ The "hello world" of microcontrollers. It configures **PB0** as an output (`DDRB
 
 ### 2. `GCC_NeoPix`: NeoPixel colour cycle
 
-**Files:** `Demos/GCC_NeoPix/GCC_NeoPix/main.c`, `lib/src/NeoPix.c` (≈ 490 bytes of flash)
+**Files:** `Demos/GCC_NeoPix/GCC_NeoPix/main.c`, `lib/src/NeoPix.c` (≈ 410 bytes of flash)
 
 This demo drives a strip or ring of **12 WS2812B LEDs** on **PD5**. Every second it sets all LEDs to a new colour (blue → green → purple) and pushes the frame out.
 
@@ -94,13 +95,20 @@ How the driver works:
 
 - A 36-byte frame buffer (`12 LEDs × 3 bytes`) stores each LED's colour in the **GRB** order WS2812 chips expect.
 - `neopixel_set_color()` and `neopixel_set_color_all()` only change the buffer.
-- `neopixel_update()` bit-bangs the buffer out MSB-first. Each bit starts with a high pulse whose length encodes the value: a short pulse is a `0`, a long pulse is a `1`.
+- `neopixel_update()` bit-bangs the buffer out MSB-first at 800 kHz. Each bit starts with a high pulse whose length encodes the value: a short pulse is a `0`, a long pulse is a `1`. The bit loop is written in cycle-counted inline assembly for 16 MHz:
 
-The driver works on the test hardware, but its "1" timing is not deterministic. See [Known issues](#known-issues). The `main.c` file also contains a commented-out experiment that used Timer1 interrupts to generate the pulses.
+  | Bit | High | Low | Period |
+  |---|---|---|---|
+  | `0` | 6 cycles (375 ns) | 14 cycles | 20 cycles (1.25 µs) |
+  | `1` | 13 cycles (812 ns) | 7 cycles | 20 cycles (1.25 µs) |
+
+  Interrupts are blocked while the frame is sent, so an ISR can't stretch a pulse. Afterwards the line is held low for 300 µs so the LEDs latch the new colours.
+
+The `main.c` file also contains a commented-out experiment that used Timer1 interrupts to generate the pulses.
 
 ### 3. `GccI2CV01`: VL53L1X distance sensor on an OLED
 
-**Files:** `Demos/GccI2CV01/GccI2CV01/` + `lib/src/SSD1306.c` (≈ 7.2 KB flash, 874 B RAM)
+**Files:** `Demos/GccI2CV01/GccI2CV01/` + `lib/src/I2C328P.c` + `lib/src/SSD1306.c` (≈ 7.4 KB flash, 849 B RAM)
 
 This is the main demo. It reads distance from an **ST VL53L1X** laser time-of-flight sensor and shows it on a **128×32 SSD1306 OLED**, both on the same I²C bus at 100 kHz.
 
@@ -114,7 +122,9 @@ Program flow:
    - `VL53L1X_SetDistanceMode(0, 1)` selects **short** mode (up to ≈ 1.3 m, better ambient-light immunity).
    - `VL53L1X_SetTimingBudgetInMs(0, 500)` and `VL53L1X_SetInterMeasurementInMs(0, 500)` set slow, accurate measurements twice per second.
    - `VL53L1X_StartRanging()` starts continuous measurement.
-5. Main loop: wait for `CheckForDataReady`, read `GetRangeStatus` and `GetDistance` (in mm), then `ClearInterrupt`. The loop prints **`Distance: 12.3 cm`** on text row 3 and waits 500 ms.
+
+   If any of these calls fails, the display shows `VL53L1X init error` and the program stops.
+5. Main loop: wait for `CheckForDataReady`, read `GetRangeStatus` and `GetDistance` (in mm), then `ClearInterrupt`. The loop prints **`Distance:  12.3 cm`** on text row 3, or `No valid range (n)` if the range status isn't 0, and waits 500 ms. Each line is padded to the full row width, so it overwrites the previous reading without clearing (and flickering) the display.
 
 #### Porting ST's driver to the AVR
 
@@ -122,12 +132,11 @@ ST ships the VL53L1X **Ultra-Lite Driver (ULD, STSW-IMG009)** as portable C code
 
 | Platform function | What it does on the bus |
 |---|---|
-| `VL53L1_WrByte / WrWord / WrDWord` | START, `0x29`+W, 16-bit register index (MSB first), 1/2/4 data bytes (MSB first), STOP |
-| `VL53L1_RdByte / RdWord / RdDWord` | Write the 16-bit index, then repeated START, `0x29`+R, read 1/2/4 bytes, STOP |
-| `VL53L1_WriteMulti / ReadMulti` | Same as above for an arbitrary-length buffer |
-| `VL53L1_WaitMs` | Stub (not implemented yet) |
+| `VL53L1_WrByte / WrWord / WrDWord / WriteMulti` | START, `0x29`+W, 16-bit register index (MSB first), the data bytes (MSB first), STOP |
+| `VL53L1_RdByte / RdWord / RdDWord / ReadMulti` | START, `0x29`+W, 16-bit index, STOP; then START, `0x29`+R, read the bytes (ACK each one except the last, which gets NACK), STOP |
+| `VL53L1_WaitMs` | Busy-waits with `_delay_ms(1)` in a loop |
 
-The commit history ("Debuggin VL53L1X library", "Bug fixed") records getting this layer working, mainly the byte order of 16-bit reads.
+All of them share two helpers, `VL53L1_Write()` and `VL53L1_Read()`, so the bus sequence is written only once. The commit history ("Debuggin VL53L1X library", "Bug fixed") records getting this layer working, mainly the byte order of 16-bit reads.
 
 ---
 
@@ -166,9 +175,10 @@ Configuration happens in `SSD1306.h`: `_SSD1306_ADDRESS` (default `0x3C`) and `_
 | `neopixel_init()` | Makes the data pin (`PD5`) an output |
 | `neopixel_set_color(i, r, g, b)` / `neopixel_set_color_all(r, g, b)` | Writes colours into the frame buffer |
 | `neopixel_turn_off(i)` / `neopixel_turn_off_all()` | Sets one or all LEDs to black |
-| `neopixel_update()` | Sends the buffer to the LEDs |
+| `neopixel_update()` | Sends the buffer to the LEDs (interrupts blocked during the frame), then latches it |
+| `neopixel_send_pulse()` | Holds the data line low for 300 µs so the LEDs latch the frame (called by `neopixel_update()`) |
 
-The pin and LED count are set by `NEOPIXEL_PORT`, `NEOPIXEL_DDR`, `NEOPIXEL_PIN` and `NEOPIXEL_NUM_LEDS` (currently 12) in the header.
+The pin and LED count are set by `NEOPIXEL_PORT`, `NEOPIXEL_DDR`, `NEOPIXEL_PIN` and `NEOPIXEL_NUM_LEDS` (currently 12) in the header. The timing only works at 16 MHz, so `NeoPix.c` stops the build with an `#error` if `F_CPU` is anything else.
 
 ### `sci.h` / `sci328P.c`: USART0 serial
 
@@ -186,14 +196,16 @@ The pin and LED count are set by `NEOPIXEL_PORT`, `NEOPIXEL_DDR`, `NEOPIXEL_PIN`
 | Function | Description |
 |---|---|
 | `Timer_Init(Timer_Prescale pre, unsigned int offset)` | Timer1 in normal mode with the **Output Compare A interrupt** enabled, for periodic ticks. The ISR must add `offset` to `OCR1A` again (template in `timer.h`). Example: prescale 64 with offset 250 gives a 1 ms tick at 16 MHz. |
-| `Timer_F_PWM0(chan, clksel, pol)` | Timer0 **fast PWM** on **OC0A (PD6)**, inverting or non-inverting, starting at 50 % duty. Change duty with `OCR0A`. |
+| `Timer_F_PWM0(chan, clksel, pol)` | Timer0 **fast PWM** on **OC0A (PD6)** or **OC0B (PD5)**, inverting or non-inverting, starting at 50 % duty. Change duty with `OCR0A` / `OCR0B`. Both channels can run at once. No interrupt is enabled. |
 
 ### `atd.h` / `atd328P.c`: ADC
 
 | Function | Description |
 |---|---|
 | `AtoD_Init(channel)` | Powers up the ADC in **free-running** mode with a ÷128 prescaler (125 kHz ADC clock at 16 MHz) and selects the channel |
-| `AtoD_SetChannel(channel)` | Switches `ADMUX` to another channel and disables the digital input buffer on that pin (`DIDR0`) |
+| `AtoD_SetChannel(channel)` | Switches `ADMUX` to another channel, picks the voltage reference, and disables the digital input buffer on that pin (`DIDR0`, ADC0–ADC5 only) |
+
+The reference is **AVcc** for the input channels and the **internal 1.1 V** reference for `AtoD_TempSensor`, as the datasheet requires.
 
 There is no read function: read the 10-bit result directly from the `ADC` register.
 
@@ -220,93 +232,104 @@ The original `.atsln` and `.cproj` files are not in the repository, so you have 
 4. **Project Properties → Toolchain → AVR/GNU C Compiler → Directories**: add `lib/inc`. For `GccI2CV01`, also add `API/core` and `API/platform`.
 5. Build (F7) and program with your tool (Atmel-ICE, AVRISP mkII, Arduino bootloader through avrdude, ...).
 
-### Option B: command line (avr-gcc + avrdude)
+### Option B: command line with the `Makefile`
 
 Install the toolchain:
 
-- **Debian/Ubuntu:** `sudo apt install gcc-avr avr-libc binutils-avr avrdude`
+- **Debian/Ubuntu:** `sudo apt install gcc-avr avr-libc binutils-avr avrdude make`
 - **macOS:** `brew tap osx-cross/avr && brew install avr-gcc avrdude`
-- **Windows:** the toolchain that ships with Microchip Studio, or WinAVR
+- **Windows:** the toolchain that ships with Microchip Studio (add its `bin` folder to `PATH`) plus GNU Make, or WinAVR
 
-Run these from the repository root (they were tested with avr-gcc 7.3):
+Then, from the repository root:
 
 ```bash
-CFLAGS="-mmcu=atmega328p -Os -std=gnu99 -Wall -ffunction-sections -fdata-sections -Ilib/inc"
-
-# 1. LED blink
-avr-gcc $CFLAGS Demos/GccDemo01/GccDemo01/main.c -o blink.elf
-
-# 2. NeoPixel
-avr-gcc $CFLAGS Demos/GCC_NeoPix/GCC_NeoPix/main.c lib/src/NeoPix.c -o neopix.elf
-
-# 3. VL53L1X + OLED
-D=Demos/GccI2CV01/GccI2CV01
-avr-gcc $CFLAGS -I$D/API/core -I$D/API/platform \
-  $D/main.c lib/src/I2C328P.c lib/src/SSD1306.c $D/API/core/*.c $D/API/platform/*.c \
-  -Wl,--gc-sections -lm -o tof.elf
-
-# Convert to Intel HEX and check the size
-avr-objcopy -O ihex -R .eeprom tof.elf tof.hex
-avr-size -C --mcu=atmega328p tof.elf
+make                 # build all demos into build/<demo>/<demo>.hex and compile every driver in lib/
+make tof             # build one demo: blink, neopix or tof
+make size            # flash and RAM use of each demo
+make flash-tof       # build and upload with avrdude
+make clean           # delete build/
+make help            # list the targets
 ```
 
-`F_CPU` (16 MHz) is defined at the top of each `main.c`. Change it there if your clock is different.
+`make` also compiles the drivers that no demo uses yet (`sci`, `timer`, `atd`, `LM75A`), so a mistake in them shows up straight away. It was tested with avr-gcc 7.3 and builds with no warnings at `-Wall`.
+
+| Demo target | Source | Flash | RAM |
+|---|---|---|---|
+| `blink` | `Demos/GccDemo01` | 162 B | 0 B |
+| `neopix` | `Demos/GCC_NeoPix` | 412 B | 36 B |
+| `tof` | `Demos/GccI2CV01` | 7374 B | 849 B |
+
+The clock is set once with `F_CPU` (default `16000000UL`). Every source file falls back to 16 MHz when `F_CPU` isn't defined, which is the case in Microchip Studio unless you add it under **Symbols**.
 
 ### Flashing
 
-```bash
-# Arduino Uno (Optiboot bootloader)
-avrdude -c arduino -p m328p -P /dev/ttyACM0 -b 115200 -U flash:w:tof.hex:i
+`make flash-<demo>` runs avrdude with settings you can override on the command line:
 
-# Arduino Nano with the old bootloader: use -b 57600 and usually -P /dev/ttyUSB0
-# ISP programmer (e.g. USBasp), no bootloader
-avrdude -c usbasp -p m328p -U flash:w:tof.hex:i
+| Variable | Default | Notes |
+|---|---|---|
+| `PROGRAMMER` | `arduino` | `usbasp`, `avrisp2`, `atmelice_isp`, ... for an ISP programmer |
+| `PORT` | `/dev/ttyACM0` | `COM3` on Windows, `/dev/ttyUSB0` for most Nano clones, `usb` for USB programmers |
+| `BAUD` | `115200` | `57600` for a Nano with the old bootloader |
+
+```bash
+make flash-tof                                   # Arduino Uno
+make flash-neopix PORT=/dev/ttyUSB0 BAUD=57600   # Nano, old bootloader
+make flash-blink PROGRAMMER=usbasp PORT=usb      # USBasp, no bootloader
 ```
 
-On Windows, use `-P COM3` (or whichever port the board is on).
+This is the same as calling avrdude directly:
+
+```bash
+avrdude -c arduino -p m328p -P /dev/ttyACM0 -b 115200 -U flash:w:build/tof/tof.hex:i
+```
 
 ---
 
 ## Known issues
 
-These were found by reading the code and compiling it with `-Wall -Wextra`. ✅ marks the ones the compiler reports itself.
+### Fixed
 
-### Bugs
+A code review in November 2026 found these bugs. They are fixed in the current code but have **not been re-tested on hardware** yet.
 
-| Where | Problem | Suggested fix |
+| Where | What was wrong | Fix |
 |---|---|---|
-| `GccI2CV01/main.c` ✅ | `char distance[10]` is too small. `"Distance: 123.4 cm"` needs up to 20 bytes, so `sprintf` overflows into other globals. | Use `char distance[24]` and `snprintf`. |
-| `GccI2CV01/main.c` | `_DataReady` is never set back to 0 (the line is commented out). After the first reading, the loop no longer waits for new data. | Set `_DataReady = 0` after `ClearInterrupt`. |
-| `vl53l1_platform.c` `RdDWord` ✅ | `ucData[0] << 24` is computed in 16-bit `int` on AVR, so the top two bytes are lost. | Cast first: `((uint32_t)ucData[0] << 24) \| ...` |
-| `vl53l1_platform.c` `ReadMulti` | ACK and NACK are swapped: every byte except the last is NACKed, and the last is ACKed. It should be the other way round. | Use `I2C_ACK` for bytes `0..n-2` and `I2C_NACK` + `I2C_STOP` for the last one. |
-| `vl53l1_platform.c` `WrByte` | The data byte is written with `I2C_NOSTOP`, so the bus is never released. It only works because the next call issues a repeated START. | Use `I2C_STOP`. |
-| `vl53l1_platform.c` `WaitMs` | Empty stub that returns immediately. | `while (wait_ms--) _delay_ms(1);` |
-| `SSD1306.c` `SetPage` (128×32) | The bounds check allows `page == 4`, which writes 128 bytes past the 512-byte buffer. | Change `page > 4` to `page > 3`. |
-| `SSD1306.c` `CharXY` | Column 21 starts at pixel 126, so the 5-pixel character runs off the row (and off the buffer on the last row). | Limit `iX` to `% 21`. |
-| `NeoPix.c` `update` | A "1" bit is only long because the code increments a 64-bit counter (`++_Cntr`), about 70 cycles (≈ 4.4 µs). Timing depends on the optimiser, and interrupts are not disabled during the frame. | Write the bit loop in cycle-counted inline assembly (≈ 0.4 µs / 0.8 µs high). Wrap it in `cli()` / `sei()` and hold the line low for ≥ 50 µs to latch. |
-| `timer328P.c` `Timer_F_PWM0` | Enables the Timer0 overflow interrupt. If the program has no `ISR(TIMER0_OVF_vect)`, the MCU **resets** as soon as `sei()` is called. | Don't enable the interrupt for plain PWM, or document that an ISR is required. |
-| `atd328P.c` `AtoD_Init` | `ADMUX = 0` selects the external **AREF** pin as reference. On an Arduino, AREF isn't connected, so readings are meaningless. The internal temperature channel also needs the 1.1 V reference. | Use `REFS0` (AVcc) by default, and the 1.1 V reference for `AtoD_TempSensor`. |
+| `GccI2CV01/main.c` | `char distance[10]` was too small for `"Distance: 123.4 cm"`, so `sprintf` wrote past the end (the compiler warned about it). | 22-byte line buffer and `snprintf` |
+| `GccI2CV01/main.c` | `_DataReady` was never set back to 0, so after the first reading the loop stopped waiting for new data. | Reset before each wait |
+| `vl53l1_platform.c` `RdDWord` | `byte << 24` was computed in 16-bit `int`, so the top two bytes were lost (compiler warning). | Cast to `uint32_t` before shifting |
+| `vl53l1_platform.c` `ReadMulti` | ACK and NACK were swapped: every byte but the last was NACKed and the last was ACKed. | ACK all bytes except the last |
+| `vl53l1_platform.c` `WrByte` | Never sent STOP, so the bus was never released. | All writes now end with STOP |
+| `vl53l1_platform.c` `WaitMs` | Empty stub | Waits with `_delay_ms(1)` in a loop |
+| `SSD1306.c` `SetPage` (128×32) | Allowed `page == 4`, writing 128 bytes past the 512-byte buffer | Limit is now page 3 |
+| `SSD1306.c` `CharXY` | Column 21 ran off the 128-pixel row and past the buffer on the last row | Columns wrap at 21 |
+| `NeoPix.c` | A "1" bit was long only because of a slow 64-bit counter increment (≈ 4.4 µs). Timing depended on the optimiser and on interrupts. | Cycle-counted assembly, interrupts blocked, 300 µs latch |
+| `timer328P.c` `Timer_F_PWM0` | Enabled the Timer0 overflow interrupt with no ISR, which **resets** the MCU on `sei()`. `OC0B` was accepted but ignored. | No interrupt; `OC0B` implemented |
+| `atd328P.c` | Used the external AREF pin as reference (not connected on an Arduino). The temperature sensor needs the 1.1 V reference. | AVcc by default, 1.1 V for `AtoD_TempSensor` |
 
-### Robustness and maintainability
+> **Behaviour changes to be aware of:**
+> - `Timer_F_PWM0` no longer enables `TOIE0`. If you used `ISR(TIMER0_OVF_vect)` with it, set `TIMSK0 |= (1 << TOIE0)` yourself.
+> - The ADC no longer uses the AREF pin. If your board drives AREF with its own reference, change `AtoD_SetChannel`.
 
-- **No I²C timeouts.** Every `while (!(TWCR & (1<<TWINT)))` waits forever, so an unplugged sensor or a stuck bus freezes the program. Error paths also return without sending STOP.
-- **Status codes are ignored.** In `GccI2CV01/main.c`, every `status = ...` is overwritten without being checked. Also, `I2C_Scan` results are collected but never shown.
+### Still open
+
+- **No I²C timeouts.** Every `while (!(TWCR & (1<<TWINT)))` waits forever, so an unplugged sensor or a stuck bus freezes the program. The I²C error paths also return without sending STOP.
+- **`I2C_Scan` results aren't shown.** `GccI2CV01` collects them but doesn't display them.
 - **Display size is hard-wired.** `SSD1306.h` always defines `_SSD1306_DisplaySize128x32`, so defining 128×64 from the build adds a second set of definitions and the build fails. Each display function is also written twice, once per size. A single `SSD1306_PAGES` constant would remove the duplication.
 - **Most headers have no include guards** (`I2C.h`, `sci.h`, `timer.h`, `atd.h`, `LM75A.h`, `SSD1306.h`).
-- **`F_CPU` is defined in several source files** (`16E6`, a floating-point literal, in two of them). Define it once as `-DF_CPU=16000000UL` in the build.
-- **Duplicated `I2C328P.c`.** `Demos/GccI2CV01/GccI2CV01/I2C328P.c` is identical to `lib/src/I2C328P.c`. The library copy also starts with a UTF-8 BOM.
+- **Duplicated `I2C328P.c`.** `Demos/GccI2CV01/GccI2CV01/I2C328P.c` is identical to `lib/src/I2C328P.c` (the `Makefile` uses the `lib/` copy). The library copy also starts with a UTF-8 BOM.
 - **Hard-coded VL53L1X address.** The platform layer uses `0x29` and ignores the `dev` parameter, so two sensors (or a re-addressed one) can't be used.
-- **Leftover code.** There are large commented-out blocks, unused globals (`xtalk`, `offSet`, the `*String1/2` buffers, `cnter`) and stale comments: `NeoPix.h` says 8 LEDs but the code uses 12, and `neopixel_send_pulse` says "50 µs" but waits 1 µs.
+- **Leftover code.** There are large commented-out blocks in `GCC_NeoPix/main.c` and `SSD1306.c`.
 - **`.gitignore` hides the project files** (`*.cproj`, `*.atsln`). On a case-insensitive file system its `*.s` rule would also ignore hand-written assembly (`.S`).
 
 ---
 
 ## Roadmap
 
-- [ ] Fix the bugs listed above
-- [ ] Add a `Makefile` (or CMake preset) so every demo builds with one command
+- [x] Fix the bugs found in the code review
+- [x] Add a `Makefile` so every demo builds with one command
+- [ ] Re-test all three demos on hardware after the fixes
+- [ ] Add I²C timeouts and send STOP on errors
 - [ ] Commit the Microchip Studio `.atsln` / `.cproj` files, or document the project settings
-- [ ] Add a GitHub Actions workflow that compiles every demo with `avr-gcc`
+- [ ] Add a GitHub Actions workflow that runs `make`
 - [ ] Add demos for the drivers that don't have one yet: **UART echo**, **ADC → serial**, **Timer1 1 ms tick**, **PWM LED dimming**, **LM75A thermometer on the OLED**
 - [ ] Add wiring diagrams or photos and a short video/GIF of each demo in `docs/`
 - [ ] Attach prebuilt `.hex` files to GitHub Releases

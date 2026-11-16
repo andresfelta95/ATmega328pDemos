@@ -6,7 +6,9 @@
  * 
  * Description: This is a test program for the NeoPixel library.
  */ 
-#define F_CPU 16E6
+#ifndef F_CPU
+#define F_CPU 16000000UL
+#endif
 
 #include <avr/io.h>
 #include <util/delay.h> // have to add, has delay implementation (requires F_CPU to be defined)

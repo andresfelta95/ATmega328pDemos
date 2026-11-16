@@ -6,7 +6,7 @@
  * Description: This is a demo of the I2C library for the ATmega328P
  *              It will use a 128x32 OLED display to display the
  *              the reading of the VL53L1CX distance sensor.
- * 
+ *
  *  VL53L1CX specifications:
 
         - Emitter: 940 nm invisible laser (Class1)
@@ -20,109 +20,87 @@
         - Can be hidden behind many cover window materials
         - I²C interface (up to 400 kHz)
         - Shutdown and interrupt pins
- */ 
+ */
 
-#define F_CPU 16E6
+#ifndef F_CPU
+#define F_CPU 16000000UL
+#endif
 
 #include <avr/io.h>
 #include <util/delay.h>
-#include <avr/interrupt.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include "I2C.h"
 #include "SSD1306.h"
 #include "VL53L1X_api.h"
-#include "VL53L1X_calibration.h"
+
+//  The ST API identifies the sensor with a 'dev' handle; this port has one sensor
+#define TOF_DEV 0
 
 //  Global Variables
-uint16_t _Distance = 0;
-uint16_t xtalk = 0;
-uint16_t _Xtalk = 0;
-int16_t offSet = 0;
-int16_t _Offset = 0;
-VL53L1X_ERROR status = 0;
-uint8_t state = 0;
-uint8_t _DataReady = 0;
-uint8_t _RangeStatus = 0;
+uint16_t _Distance = 0;         // last distance, in mm
+uint8_t _DataReady = 0;         // set by the sensor when a new measurement is ready
+uint8_t _RangeStatus = 0;       // 0 = valid measurement, anything else = error/warning
+uint8_t _BootState = 0;         // non-zero once the sensor firmware has booted
 //  Create a 128byte buffer for the I2C scan
 unsigned char I2CScanResults[128];
-// String to show the distance as 10.00 cm
-char distance[10];
-char xtalkString1[20];
-char xtalkString2[20];
-char offsetString1[20];
-char offsetString2[20];
-
-
+// One display row: 21 characters + terminator
+char _Line[22];
 
 int main(void)
 {
     //  Initialize the I2C bus
     I2C_Init(F_CPU, I2CBus100);
-    //  Scan the I2C bus
+    //  Scan the I2C bus (results are useful when debugging the wiring)
     I2C_Scan(I2CScanResults);
-    //  Initialize the SSD1306 OLED display
+    //  Initialize the SSD1306 OLED display (also clears it)
     SSD1306_DispInit();
-    // //  Turn on the display
     SSD1306_DisplayOn();
-    // //  Clear the display
-    SSD1306_Clear();
-    SSD1306_Render();
-    // //  Writhe my name on the display
-    // SSD1306_StringXY(0, 2, "Andres");
-    // SSD1306_StringXY(7, 2, "Tangarife");
-    // SSD1306_Render();
-    while(state == 0)
+
+    //  Wait for the VL53L1X to boot
+    while (_BootState == 0)
     {
-        status = VL53L1X_BootState(0, &state);
+        VL53L1X_BootState(TOF_DEV, &_BootState);
         _delay_ms(2);
     }
+
     //  Initialize the VL53L1X sensor
-    status = VL53L1X_SensorInit(0);
-    status = VL53L1X_SetDistanceMode(0, 1);
-    status = VL53L1X_SetTimingBudgetInMs(0, 500);
-    status = VL53L1X_SetInterMeasurementInMs(0, 500);
-    //  Calibrate the sensor
-    // status = VL53L1X_SetOffset(0, -17);
+    VL53L1X_ERROR status = VL53L1X_SensorInit(TOF_DEV);
+    status |= VL53L1X_SetDistanceMode(TOF_DEV, 1);          // 1 = short (up to ~1.3 m)
+    status |= VL53L1X_SetTimingBudgetInMs(TOF_DEV, 500);
+    status |= VL53L1X_SetInterMeasurementInMs(TOF_DEV, 500);
+    //  Start continuous ranging measurements
+    status |= VL53L1X_StartRanging(TOF_DEV);
 
-    // //  Start continuous ranging measurements
-    status = VL53L1X_StartRanging(0);
-
-    while (1) 
+    if (status)
     {
+        SSD1306_StringXY(0, 1, "VL53L1X init error");
+        SSD1306_Render();
+        while (1)
+            ;
+    }
+
+    while (1)
+    {
+        //  Wait for a new measurement
+        _DataReady = 0;
         while (_DataReady == 0)
         {
-            status = VL53L1X_CheckForDataReady(0, &_DataReady);
+            VL53L1X_CheckForDataReady(TOF_DEV, &_DataReady);
         }
-        status = VL53L1X_GetRangeStatus(0, &_RangeStatus);
-        status = VL53L1X_GetDistance(0, &_Distance);
-        status = VL53L1X_ClearInterrupt(0);
-        //  Clear the display
-        SSD1306_Clear();
-        SSD1306_Render();
-        //  Sleep for 1 second
-        // status = VL53L1X_CalibrateOffset(0, 140, &offSet);
-        // _delay_ms(3000);
-        // //  Writhe my name on the display
-        // SSD1306_StringXY(0, 2, "Andres");
-        // SSD1306_StringXY(7, 2, "Tangarife");
-        // SSD1306_Render();
-        // status = VL53L1X_GetOffset(0, &_Offset);
-        // // Set the 2 offset values in a string
-        // sprintf(offsetString2, "Offset: %d", state);
-        // SSD1306_StringXY(0, 0, offsetString2);
-        //  Display the distance as 10.00 cm
-        sprintf(distance, "Distance: %u.%u cm", _Distance/10, _Distance%10);
-        SSD1306_StringXY(0, 3, distance);
-        SSD1306_Render();
-        //  Reset the _Distance variable
-        // _Distance = 0;
-        // _DataReady = 0;
-        //  sleep for 1 second
-        // status = VL53L1X_GetOffset(0, &_Offset);
-        _delay_ms(500);
+        VL53L1X_GetRangeStatus(TOF_DEV, &_RangeStatus);
+        VL53L1X_GetDistance(TOF_DEV, &_Distance);
+        VL53L1X_ClearInterrupt(TOF_DEV);
 
+        //  Show the distance as 12.3 cm. Every line is padded to the full
+        //  21-character row so it overwrites the previous text without
+        //  clearing (and flickering) the whole display.
+        if (_RangeStatus == 0)
+            snprintf(_Line, sizeof _Line, "Distance: %3u.%u cm  ", _Distance / 10, _Distance % 10);
+        else
+            snprintf(_Line, sizeof _Line, "No valid range (%3u) ", _RangeStatus);
+        SSD1306_StringXY(0, 3, _Line);
+        SSD1306_Render();
+
+        _delay_ms(500);
     }
 }
-

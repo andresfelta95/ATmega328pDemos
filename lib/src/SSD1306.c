@@ -408,7 +408,7 @@ void SSD1306_SetPage (int page, PGM_P buff)
 #ifdef _SSD1306_DisplaySize128x32
 void SSD1306_SetPage (int page, PGM_P buff)
 {
-    if (page < 0 || page > 4)
+    if (page < 0 || page > 3)
       return;
     
     _DispDirty[page] = 1;
@@ -528,7 +528,8 @@ void SSD1306_Line (int iXS, int iYS, int iXE, int iYE)
 void SSD1306_CharXY (unsigned char iX, unsigned char iY, char disp)
 {
   // ensure axes in range, could be called with automation, so no error, just fix
-  iX = iX % 22;
+  // 21 columns of 6 pixels fit in 128 pixels (column 21 would run off the row)
+  iX = iX % 21;
   iY = iY % 8;
   
   // keep display character in range or show as space
@@ -557,7 +558,8 @@ void SSD1306_CharXY (unsigned char iX, unsigned char iY, char disp)
 void SSD1306_CharXY (unsigned char iX, unsigned char iY, char disp)
 {
   // ensure axes in range, could be called with automation, so no error, just fix
-  iX = iX % 22;
+  // 21 columns of 6 pixels fit in 128 pixels (column 21 would run off the row)
+  iX = iX % 21;
   iY = iY % 4;
   
   // keep display character in range or show as space

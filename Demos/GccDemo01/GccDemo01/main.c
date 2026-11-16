@@ -4,7 +4,9 @@
  * Created: 3/10/2023 2:32:51 PM
  * Author : atangarifecamac1
  */ 
+#ifndef F_CPU
 #define F_CPU 16000000UL
+#endif
 #include <avr/io.h>
 #include <util/delay.h>
 
